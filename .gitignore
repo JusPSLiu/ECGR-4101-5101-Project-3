@@ -1,5 +1,13 @@
-Lab3_Bootloader/build
-Lab3_Application/build
-Lab3_Bootloader/cmake
 Lab3_Application/cmake
+Lab3_Application/build
+Lab3_Application/Core/Src/main.c
+Lab3_Application/Core/Inc/main.h
 
+
+Lab3_Bootloader/cmake
+Lab3_Bootloader/build
+Lab3_Bootloader/Core/Src/main.c
+Lab3_Bootloader/Core/Inc/main.h
+
+
+python/firmware_sender.py
