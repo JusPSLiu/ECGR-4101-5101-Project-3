@@ -34,7 +34,7 @@ READY_TIMEOUT = 15          # seconds to wait for READY_BYTE (erasing the app re
 DONE_BYTE = b'D'            # optional: byte the bootloader sends when writing finished successfully
 ERROR_BYTE = b'E'           # optional: byte the bootloader sends if something failed
 DONE_TIMEOUT = 10           # seconds to wait for DONE_BYTE / ERROR_BYTE after the last chunk
-
+WAIT_FOR_DONE = True        # True = wait for DONE_BYTE at the end; set False if Feature 1 doesn't send one
 DONE_TIMEOUT = 10           # seconds to wait for DONE_BYTE / ERROR_BYTE after the last chunk
 
 # Testing
@@ -138,3 +138,39 @@ if not wait_for_byte(READY_BYTE, READY_TIMEOUT, "ready signal"):
         ser.close()                                   # release the COM port before exiting
     sys.exit(1)
 print("Bootloader is ready - flash erased, starting firmware transfer")
+
+
+
+# SECTION F: SEND THE FIRMWARE IN CHUNKS
+
+
+total = len(firmware)                                 # total number of bytes to send
+num_chunks = (total + CHUNK_SIZE - 1) // CHUNK_SIZE   # round up so a partial last chunk still counts
+if DRY_RUN:
+    last_chunk = total - (num_chunks - 1) * CHUNK_SIZE  # size of the final (possibly partial) chunk
+    print(f"[DRY RUN] would send {num_chunks} chunks of up to {CHUNK_SIZE} bytes (last chunk: {last_chunk} bytes)")
+
+sent = 0                                              # running count of bytes sent so far
+for start in range(0, total, CHUNK_SIZE):             # step through the file CHUNK_SIZE bytes at a time
+    chunk = firmware[start:start + CHUNK_SIZE]        # slice out the next piece (the last one may be shorter)
+    if not DRY_RUN:
+        ser.write(chunk)                              # send this piece to the bootloader
+        ser.flush()                                   # make sure it has fully left the laptop before pausing
+    sent += len(chunk)
+    percent = sent * 100 // total                     # whole-number percentage complete
+    # "\r" returns to the start of the line, so the progress updates in place instead of printing hundreds of lines
+    print(f"\rSent {sent}/{total} bytes ({percent}%)", end="", flush=True)
+    time.sleep(CHUNK_DELAY)                           # short pause so the bootloader can write flash before the next chunk
+print()                                               # move to a new line after the progress line finishes
+
+# After the last byte - wait for the bootloader to confirm it wrote everything to flash
+if WAIT_FOR_DONE:
+    if not wait_for_byte(DONE_BYTE, DONE_TIMEOUT, "done signal"):
+        print("Firmware may not have been written correctly. Reset the board and run the script again.")
+        if ser:
+            ser.close()                               # release the COM port before exiting
+        sys.exit(1)
+
+if ser:
+    ser.close()                                       # done with the port - release it for other programs
+print("Firmware update complete! Press the User button on the board to start the new application.")
