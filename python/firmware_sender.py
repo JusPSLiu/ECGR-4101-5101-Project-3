@@ -102,3 +102,39 @@ if SEND_SIZE_FIRST:
     size_bytes = struct.pack("<I", len(firmware))
     send(size_bytes, "file size")
     print(f"File size sent: {len(firmware)} bytes")  # tells the bootloader exactly how many data bytes to expect
+
+
+
+    
+
+# SECTION E: WAIT FOR THE BOOTLOADER'S "READY" SIGNAL
+
+
+def wait_for_byte(expected, timeout, what):
+    """Wait up to `timeout` seconds for the bootloader to send the `expected` byte.
+    Returns True if it arrives, False if the bootloader reports an error or time runs out."""
+    if DRY_RUN:
+        print(f"[DRY RUN] pretending the bootloader sent the {what} ({expected!r})")
+        return True                                   # no board in dry-run mode - so assume it replied
+
+    print(f"Waiting up to {timeout} s for the {what}...")
+    deadline = time.time() + timeout                  # the moment we give up waiting
+    while time.time() < deadline:
+        reply = ser.read(1)                           # wait up to SERIAL_TIMEOUT (1 s) for one byte; b'' if nothing came
+        if reply == expected:
+            return True                               # got the byte we were waiting for
+        if reply == ERROR_BYTE:
+            print(f"Bootloader reported an error while waiting for the {what}.")
+            return False                              # bootloader said something went wrong
+        # any other byte (or nothing yet) is ignored - keep waiting until the deadline
+    print(f"Timed out: no {what} after {timeout} s.")
+    return False                                      # deadline passed with no reply
+
+if not wait_for_byte(READY_BYTE, READY_TIMEOUT, "ready signal"):
+    # Without the ready signal the bootloader may still be erasing flash,
+    # so sending the firmware now would lose data - stop instead.
+    print("Is the bootloader in update mode? Try resetting the board and running the script again.")
+    if ser:
+        ser.close()                                   # release the COM port before exiting
+    sys.exit(1)
+print("Bootloader is ready - flash erased, starting firmware transfer")
