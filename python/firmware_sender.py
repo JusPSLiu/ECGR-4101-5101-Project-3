@@ -37,11 +37,45 @@ DONE_TIMEOUT = 10           # seconds to wait for DONE_BYTE / ERROR_BYTE after t
 WAIT_FOR_DONE = True        # True = wait for DONE_BYTE at the end; set False if Feature 1 doesn't send one
 DONE_TIMEOUT = 10           # seconds to wait for DONE_BYTE / ERROR_BYTE after the last chunk
 
+# Safety limits
+WRITE_TIMEOUT = 5           # seconds a single write may block before we decide the bootloader stopped listening
+MAX_APP_SIZE = 960 * 1024   # application flash region is 960 KB (0x08010000 to the end of flash) - a bigger file can't fit
+
 # Testing
 # True  = no board needed: skip opening the port and just PRINT what would be sent.
 # False = real run: open the port and actually send to the bootloader.
 # Set this to False for the team test with the real board.
 DRY_RUN = True
+
+
+# SECTION G: ERROR HANDLING
+# This runs automatically if anything below crashes, so the user sees a short,
+# clear message instead of a long red traceback - and the COM port always gets closed.
+
+
+def handle_error(exc_type, exc, tb):
+    """Called by Python for any error that isn't caught elsewhere in the script."""
+    print()                                          # end the progress line (if any) before printing the message
+    if issubclass(exc_type, KeyboardInterrupt):
+        print("Stopped by user (Ctrl+C). The firmware was NOT fully sent - run the script again to retry.")
+    elif issubclass(exc_type, serial.SerialTimeoutException):
+        print(f"Transmission error: the bootloader stopped accepting data (no progress for {WRITE_TIMEOUT} s).")
+        print("Reset the board, put it back in update mode, and run the script again.")
+    elif issubclass(exc_type, serial.SerialException):
+        print("Transmission error: lost connection to the board during the transfer.")
+        print(f"Details: {exc}")
+        print("Check the USB OTG FS cable, reset the board, and run the script again.")
+    else:
+        sys.__excepthook__(exc_type, exc, tb)        # anything unexpected: show the normal Python traceback so it can be debugged
+    port = globals().get("ser")                      # the port may not exist yet if the error happened early
+    if port:
+        try:
+            port.close()                             # always release the COM port so it isn't left "in use"
+        except Exception:
+            pass                                     # the port may already be gone (e.g. cable unplugged)
+    sys.exit(1)
+
+sys.excepthook = handle_error                        # tell Python to use handle_error for uncaught errors from here on
 
 
 # SECTION B: READ THE FIRMWARE FILE
@@ -55,7 +89,22 @@ def read_firmware(path):
     print(f"Read {len(data)} bytes from {path.name}")   # confirm the file was found and show its size
     return data                           # hand the bytes to the rest of the script to send
 
-firmware = read_firmware(BIN_PATH)        # read the file now so later sections can send it
+try:
+    firmware = read_firmware(BIN_PATH)        # read the file now so later sections can send it
+except FileNotFoundError:
+    # The application hasn't been built yet, or the path in BIN_PATH is wrong
+    print(f"Firmware file not found: {BIN_PATH.resolve()}")
+    print("Build the Lab3_Application project first (or check BIN_PATH in the settings).")
+    sys.exit(1)
+
+if len(firmware) == 0:
+    # An empty file would "succeed" but leave the board with no application at all
+    print("Firmware file is empty - rebuild the Lab3_Application project and try again.")
+    sys.exit(1)
+if len(firmware) > MAX_APP_SIZE:
+    # Too big to fit in the application flash region; writing it would run past the end of flash
+    print(f"Firmware is {len(firmware)} bytes but the application region only holds {MAX_APP_SIZE} bytes.")
+    sys.exit(1)
 
 
 # SECTION C: OPEN THE SERIAL PORT
@@ -67,7 +116,7 @@ if DRY_RUN:
     print("DRY RUN: not opening a serial port (set DRY_RUN = False when the board is connected)")
 else:
     try:
-        ser = serial.Serial(port=PORT, baudrate=BAUDRATE, timeout=SERIAL_TIMEOUT)  # open the port using the values from the settings block
+        ser = serial.Serial(port=PORT, baudrate=BAUDRATE, timeout=SERIAL_TIMEOUT, write_timeout=WRITE_TIMEOUT)  # open the port using the values from the settings block
     except serial.SerialException as e:
         # The port doesn't exist or is in use; print a clear message instead of a long traceback
         print(f"Could not open {PORT}. Is the board plugged into the USB OTG FS port and running the bootloader?")
